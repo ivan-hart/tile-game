@@ -1,153 +1,85 @@
-package ecs;
+package ecs
 
-/*
+// core library imports
+import "core:fmt"
+import "core:sync"
+import "core:thread"
 
-The entity type of an unsigned 64 bit integer
-
-*/
+// the entity type of an unsigned 64 bit integer
 Entity :: distinct u64
 
-
-/*
-
-Stores the type id and rawptr to the data for the component
-
-*/
-ComponentStorage :: struct 
-{
-    type_id:     typeid,
-    data:        rawptr,
-    delete_proc: proc(data: rawptr)
+// the struct where we'll be storing all of the information of components added to the register
+ComponentStorage :: struct {
+	type:        typeid,
+	data:        rawptr,
+	delete_proc: proc(data: rawptr),
 }
 
-/*
-
-Where the information for the entity and components are stored
-
-*/
-World :: struct 
-{
-    counter:    u64,
-    entities:   [dynamic]Entity,
-    components: map[typeid]ComponentStorage,
+// the register of the ECS system
+Registry :: struct {
+	entities:   [dynamic]Entity,
+	components: map[typeid]ComponentStorage,
 }
 
-/*
-
-Initializes a world struct and returns it
-
-*/
-init_world := proc() -> World
-{
-    return World {
-        entities = make([dynamic]Entity),
-        components = make(map[typeid]ComponentStorage)
-    }
+// called at the start of the lifecycle of the program/ ECS instance to initalize the maps and arrays
+registry_init :: proc(registry: ^Registry) {
+	registry.entities = make([dynamic]Entity)
+	registry.components = make(map[typeid]ComponentStorage)
 }
 
-/*
-
-Called near the end of the world's lifespan to loop over and delete the entities and components
-
-*/
-destroy_world := proc(world: ^World)
-{
-    delete(world.entities)
-
-    for _, storage in world.components
-    {
-        storage.delete_proc(storage.data)
-    }
-
-    delete(world.components)
+// called near the end of the lifespan of the application to clean up memory
+registry_destroy :: proc(registry: ^Registry) {
+	delete(registry.entities)
+	for _, storage in registry.components {
+		storage.delete_proc(storage.data)
+	}
+	delete(registry.components)
 }
 
-/*
-
-Creates an entity with a counter that can never be reset
-
-*/
-create_entity :: proc(world: ^World) -> Entity
-{
-    world.counter += 1
-    entity := Entity(world.counter)
-    append(&world.entities, entity)
-    return entity
+// creates an entity always making sure that duplicates can't exist
+create_entity :: proc(registry: ^Registry) -> Entity {
+	@(static) id_counter: u64 = 0
+	id_counter += 1
+	entity := Entity(id_counter)
+	append(&registry.entities, entity)
+	return entity
 }
 
-/*
-
-Destroy an entity and its associated components
-
-*/
-destroy_entity :: proc(world: ^World, entity: Entity) {
-    // removes the components attached to the entity
-    for _, storage in world.components {
-        m := cast(^map[Entity]rawptr)storage.data
-        if entity in m^ {
-            // delete(m, entity)
-        }
-    }
-
-    // Remove the entity from the world
-    for i, e in world.entities {
-        if world.entities[i] == entity {
-            ordered_remove(&world.entities, i)
-            break
-        }
-    }
-}
-
-/*
-
-Add a component to an entity
-
-*/
-add_component :: proc(world: ^World, entity: Entity, component: rawptr, component_type: typeid) {
-    if component_type not_in world.components {
-        m := new(map[Entity]rawptr)
-        m^ = make(map[Entity]rawptr)
+// adds a component to an entity
+add_component :: proc(registry: ^Registry, entity: Entity, component: $T) {
+    tid := typeid_of(T)
+    if tid not_in registry.components {
+        m := new(map[Entity]T)
+        m^ = make(map[Entity]T)
         delete_proc :: proc(data: rawptr) {
-            m := cast(^map[Entity]rawptr)data
+            m := cast(^map[Entity]T)data
             delete(m^)
             free(m)
-        } 
-        world.components[component_type] = ComponentStorage {
-            type_id =     component_type,
-            data =        m,
+        }
+        registry.components[tid] = ComponentStorage {
+            type        = tid,
+            data        = m,
             delete_proc = delete_proc,
         }
     }
-    storage := &world.components[component_type]
-    m := cast(^map[Entity]rawptr)storage.data
+    storage := &registry.components[tid]
+    m := cast(^map[Entity]T)storage.data
     m^[entity] = component
+
+    // Debug print
+    // fmt.printf("Added component of type %v to entity %v\n", tid, entity)
 }
 
-/*
-
-Remove a component from an entity
-
-*/
-remove_component :: proc(world: ^World, entity: Entity, component_type: typeid) {
-    if component_type in world.components {
-        storage := world.components[component_type]
-        m := cast(^map[Entity]rawptr)storage.data
-        if entity in m^ {
-            delete(m^)
-        }
-    }
-}
-
-/*
-
-Retrieve a component from an entity
-
-*/
-get_component :: proc(world: ^World, entity: Entity, component_type: typeid) -> rawptr {
-    if component_type in world.components {
-        storage := world.components[component_type]
-        m := cast(^map[Entity]rawptr)storage.data
-        return m^[entity]
-    }
-    return nil
+// retrevies a component of the selected entity
+get_component :: proc(registry: ^Registry, entity: Entity, $T: typeid) -> ^T {
+	tid := typeid_of(T)
+	if tid not_in registry.components {
+		return nil
+	}
+	storage := registry.components[tid]
+	m := cast(^map[Entity]T)storage.data
+	if entity not_in m^ {
+		return nil
+	}
+	return &m^[entity]
 }
