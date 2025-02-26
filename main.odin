@@ -6,208 +6,192 @@ import "core:math/linalg"
 
 import rl "vendor:raylib"
 
-import ecs "ecs"
+WINDOW_WIDTH : i32 : 500
+WINDOW_HEIGHT : i32 : 500
 
-// window constants defined right here
-WINDOW_WIDTH : i32 : 600
-WINDOW_HEIGHT : i32 : 600
+GRID_SIZE_X : i32 : 20
+GRID_SIZE_Y : i32 : 20
 
-// grid constants defined right here
-GRID_SIZE_X : i32 : 50
-GRID_SIZE_Y : i32 : 50
-
-// cell constants defined right here
 CELL_SIZE_X : i32 : WINDOW_WIDTH / GRID_SIZE_X
 CELL_SIZE_Y : i32 : WINDOW_HEIGHT / GRID_SIZE_Y
 
-// the time between frames
-delta_time: f32
-
-// meant to be mostly the player input but can be used for other entities
-Input :: struct
+PlayerInput :: struct
 {
-    left: rl.KeyboardKey,   
-    up: rl.KeyboardKey,   
-    right: rl.KeyboardKey,   
-    down: rl.KeyboardKey,   
+    left  : rl.KeyboardKey,
+    up    : rl.KeyboardKey,
+    right : rl.KeyboardKey,
+    down  : rl.KeyboardKey,
 }
 
-player:       ecs.Entity // the player entity stored globally
-player_input: Input // the player input stored globally
-player_speed: f32 // the player speed stored globally
-
-// represents the position of the entity as x, y
-Position :: struct
-{
-    data: [2]f32,
-}
-
-// represents the size of the entity as width, height
-Size :: struct
-{
-    data: [2]i32,
-}
-
-// represents the color of the entity as rgba
-Color :: struct
-{
-    data: [4]u8
-}
-
-// represents the type of tile that should be rendered or polled for collision testing
 TileType :: enum
 {
-    AIR = 0,
-    WALL = 1,
+    EMPTY,
+    WALL,
+    ENEMY,
+    PLAYER,
 }
 
-// represents the tile data for an entity thats used for a tile base
-Tiles :: struct
+TileSet :: struct
 {
-    data: [GRID_SIZE_X][GRID_SIZE_Y]TileType
+    tiles : [GRID_SIZE_X][GRID_SIZE_Y]TileType
 }
 
-// the render system which is supposed to render the entities with render components to the screen
-render_system :: proc(layer: ^ecs.Registry)
+aabb :: proc() -> bool
 {
-    fmt.println("Rendering")
-
-    for entity, index in layer.entities
-    {
-        pos := ecs.get_component(layer, entity, Position)
-        size := ecs.get_component(layer, entity, Size)
-        color := ecs.get_component(layer, entity, Color)
-        tilset := ecs.get_component(layer, entity, Tiles)
-
-        if tilset != nil
-        {
-            fmt.println("has tiles")
-
-            tiledata := tilset.data
-            tile_color : rl.Color
-
-            for x, x_index in tiledata
-            {
-                for y, y_index in x
-                {
-                    #partial switch y
-                    {
-                        case .AIR:
-                            tile_color = {10, 10, 30, 255}
-                            break
-                        case .WALL:
-                            tile_color = {75, 75, 75, 255}
-                            break           
-                    }
-                    rl.DrawRectangle(i32(x_index) * CELL_SIZE_X, i32(y_index) * CELL_SIZE_Y, CELL_SIZE_X, CELL_SIZE_Y, tile_color)
-                }
-            }
-        }
-        else if pos != nil && size != nil && color != nil
-        {
-            rl.DrawRectangle(
-                i32(pos.data[0]), 
-                i32(pos.data[1]), 
-                size.data[0], 
-                size.data[1], 
-                {color.data[0], color.data[1], color.data[2], color.data[3]})
-        }
-    }
+    return false
 }
 
-// updates the player on the layer that its on
-player_update_system :: proc(layer: ^ecs.Registry) 
+update_player :: proc(tileset: ^ TileSet, player_input: PlayerInput) -> bool
 {
-    dir : [2]f32
+    should_tick := false
 
-    if rl.IsKeyDown(player_input.left)
-    {
-        dir.x = -1
-    }
-    if rl.IsKeyDown(player_input.right)
-    {
-        dir.x = 1
-    }
+    dir := [2]i32 { 0, 0 }
+
     if rl.IsKeyDown(player_input.up)
     {
         dir.y = -1
+        should_tick = true
     }
-    if rl.IsKeyDown(player_input.down)
+    else if rl.IsKeyDown(player_input.down)
     {
         dir.y = 1
+        should_tick = true
+    }
+    else if rl.IsKeyDown(player_input.left)
+    {
+        dir.x = -1
+        should_tick = true
+    }
+    else if rl.IsKeyDown(player_input.right)
+    {
+        dir.x = 1
+        should_tick = true
+    }
+    
+    player_pos : [2]i32 = {-1, -1}
+
+    for x in 0..<len(tileset.tiles)
+    {
+        for y in 0..<len(tileset.tiles)
+        {
+            if tileset.tiles[x][y] == .PLAYER
+            {
+                player_pos = {i32(x), i32(y)}
+            }
+        }
     }
 
-    // normalize the player input direction
-    dir_normal := linalg.normalize(dir)
+    if player_pos.x < 0 && player_pos.y < 0 && should_tick
+    {
+        fmt.println("No player found")
+    }
 
-    // get the position component and add the direction to it
-    position := ecs.get_component(layer, player, Position).data
-    position += dir * (player_speed * delta_time)
+    future_pos : [2]i32 = { player_pos.x + dir.x, player_pos.y + dir.y }
 
-    // sets the position component for the player
-    ecs.add_component(layer, player, Position{{position.x, position.y}})
+    if future_pos.x >= 0 && future_pos.y >= 0
+    {
+        tile := tileset.tiles[future_pos.x][future_pos.y]
+
+        if tile != .WALL
+        {
+            tileset.tiles[player_pos.x][player_pos.y] = .EMPTY
+            tileset.tiles[future_pos.x][future_pos.y] = .PLAYER
+
+            fmt.println(future_pos)
+        }
+    }
+
+    return should_tick
 }
 
-main :: proc() 
+render_tile_set :: proc(tileset: TileSet)
 {
-    // inits the window 
-    rl.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Tile Game Test Window")
-    defer rl.CloseWindow()
+    for column, x in tileset.tiles
+    {
+        for tile, y in column
+        {
+            color: rl.Color
 
-    // initlaizes the ecs registery
-    layer1 : ecs.Registry
-    ecs.registry_init(&layer1);defer ecs.registry_destroy(&layer1)
+            #partial switch tile
+            {
+                case .EMPTY:
+                    color = rl.Color {20, 20, 20, 255}
+                    break
+                case .WALL:
+                    color = rl.Color {50, 50, 50, 255}
+                    break
+                case .PLAYER:
+                    color = rl.Color {100, 100, 255, 255}
+                    break
+                case .ENEMY:
+                    color = rl.Color {255, 100, 100, 255}
+            }
 
-    // assigns WASD input to the player
-    player_input = {
-        left  = rl.KeyboardKey.A,
-        up    = rl.KeyboardKey.W,
-        right = rl.KeyboardKey.D,
-        down  = rl.KeyboardKey.S,
+            pos_x := i32(x) * CELL_SIZE_X
+            pos_y := i32(y) * CELL_SIZE_Y
+
+            rl.DrawRectangle(pos_x, pos_y, CELL_SIZE_X, CELL_SIZE_Y, color)
+        }
     }
+}
 
-    // sets the player speed to 50
-    player_speed = 100
+main :: proc()
+{
+    rl.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Tile Game Test Window");
+    defer rl.CloseWindow();
 
-    tiles : Tiles
+    rl.SetTargetFPS(60)
+
+    tileset : TileSet
+
     for x in 0..<GRID_SIZE_X
     {
         for y in 0..<GRID_SIZE_Y
         {
             if x == 0 || y == 0 || x == GRID_SIZE_X - 1 || y == GRID_SIZE_Y - 1
             {
-                tiles.data[x][y] = .WALL
+                tileset.tiles[x][y] = .WALL
             }
-            else 
+            else if x == GRID_SIZE_X / 2 && y == GRID_SIZE_Y / 2 {
+                tileset.tiles[x][y] = .PLAYER
+            }
+            else
             {
-                tiles.data[x][y] = .AIR
+                tileset.tiles[x][y] = .EMPTY
             }
         }
     }
 
-    tile_layer_1 := ecs.create_entity(&layer1)
-    ecs.add_component(&layer1, tile_layer_1, tiles)
+    player_input : PlayerInput = {
+        left = rl.KeyboardKey.A,
+        up = rl.KeyboardKey.W,
+        right = rl.KeyboardKey.D,
+        down = rl.KeyboardKey.S,
+    }
 
-    // creates the player and added some components to it
-    player = ecs.create_entity(&layer1)
-    ecs.add_component(&layer1, player, Position{{f32(WINDOW_WIDTH / 2), f32(WINDOW_HEIGHT / 2)}})
-    ecs.add_component(&layer1, player, Size{{CELL_SIZE_X, CELL_SIZE_Y}})
-    ecs.add_component(&layer1, player, Color{{255, 0, 0, 255}})
+    time : f32
 
-    // the main loop
     for !rl.WindowShouldClose()
     {
-        // gets the current time bwteen frames
-        delta_time = rl.GetFrameTime()
+        dt := rl.GetFrameTime()
+        should_tick := false
 
-        // updates the player based off of the input assined to the player_input struct
-        player_update_system(&layer1)
+        time += dt
 
-        // begins drawing and clears the background
-        rl.BeginDrawing();defer rl.EndDrawing()
-        rl.ClearBackground({20, 20, 30, 255})
-        
-        // calls the render system
-        render_system(&layer1)
+        if time > 0.2
+        {
+            should_tick = update_player(&tileset, player_input)
+
+            if should_tick
+            {
+                time = 0.0
+            }
+        }
+
+        rl.BeginDrawing()
+        defer rl.EndDrawing()
+        rl.ClearBackground({0, 0, 0, 255})
+
+        render_tile_set(tileset)
     }
 }
