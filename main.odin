@@ -67,7 +67,7 @@ update_player :: proc(tileset: ^ TileSet, player_input: PlayerInput) -> bool
         dir.x = 1
         should_tick = true
     }
-    
+
     player_pos : [2]i32 = {-1, -1}
 
     for x in 0..<len(tileset.tiles)
@@ -140,7 +140,7 @@ main :: proc()
     rl.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Tile Game Test Window");
     defer rl.CloseWindow();
 
-    rl.SetTargetFPS(60)
+    rl.SetTargetFPS(30)
 
     tileset : TileSet
 
